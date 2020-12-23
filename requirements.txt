@@ -1,0 +1,6 @@
+loguru==0.5.3
+aiohttp==3.7.3
+fake_useragent==0.1.11
+numpy==1.18.5
+linetimer==0.1.4
+SPARQLWrapper==1.8.5
