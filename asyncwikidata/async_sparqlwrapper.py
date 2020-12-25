@@ -17,13 +17,14 @@ from asyncwikidata.async_query_result import AsyncQueryResult
 from asyncwikidata.result_simplifiers import Simplifier
 
 logger.remove()
-logger.add(sys.stdout, level="DEBUG")
+logger.add(sys.stdout, level="INFO")
 
 
 class AsyncSPARQLWrapper(SPARQLWrapper):
     """The class to parallelize queries """
-    def __init__(self, endpoint, simplifier_cls: Optional[Simplifier]=None, **kwargs) -> None:
+    def __init__(self, endpoint, merge_results: bool, simplifier_cls: Optional[Simplifier] = None, **kwargs) -> None:
         super().__init__(endpoint, **kwargs)
+        self.merge_results = merge_results
         self.simplifier_cls = simplifier_cls
         self.use_sync_wrapper = True
 
@@ -80,7 +81,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
 
         return uri, data, headers
 
-    async def _async_request(self, qstr: str, session: aiohttp.ClientSession) -> Awaitable[bytes]:
+    async def _async_request(self, query: Query, session: aiohttp.ClientSession) -> Awaitable[tuple[str, bytes]]:
         """Execute the request asynchronously
 
         Args:
@@ -98,17 +99,18 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             web.HTTPError: if the requests some other code
 
         Returns:
-            Awaitable[bytes]: resulting bytes of the request
+            Awaitable[tuple[str, bytes]]: query name and resulting bytes of the request
         """
         if self.returnFormat != JSON:
             raise NotImplementedError(f'returnFormat = {self.returnFormat} is not implemented; use SPARQLWrapper instead')
 
-        uri, data, headers = self._create_request_params(qstr)
+
+        uri, data, headers = self._create_request_params(query.query_string)
         try:
             if self.method in [GET, POST]:
                 async with session.request(method=self.method, url=uri,
                                            data=data, headers=headers) as resp:
-                    return await resp.read()
+                    return (query.name, await resp.read())
             else:
                 raise NotImplementedError(f'method = {self.method} is not implemented; use SPARQLWrapper instead')
 
@@ -151,9 +153,8 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
                 super().setQuery(query[0].query_string)
                 self.use_sync_wrapper = True
             else:
-                queries = query
-                self.queryStrings =[q.query_string for q in queries]
-                self.queryType = self._parseQueryType(self.queryStrings[0])
+                self.queries = query
+                self.queryType = self._parseQueryType(self.queries[0].query_string)
                 self.use_sync_wrapper = False
         else:
             raise NotImplementedError(f'Unsupported query type {type(query)}')
@@ -180,7 +181,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         """
         tasks = []
         async with aiohttp.ClientSession() as session:
-            for query in self.queryStrings:
+            for query in self.queries:
                 tasks.append(asyncio.create_task(self._async_request(query, session)))
             return await asyncio.gather(*tasks)
 
@@ -200,6 +201,8 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         else:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             logger.debug('Asynchronous SPARQL Wrapper is used')
-            query_result = AsyncQueryResult(asyncio.run(self.gather_tasks()), format=self.returnFormat)
+            query_result = AsyncQueryResult(responses=asyncio.run(self.gather_tasks()),
+                                            format=self.returnFormat,
+                                            merge_results=self.merge_results)
 
         return self.simplifier_cls(query_result) if self.simplifier_cls else query_result

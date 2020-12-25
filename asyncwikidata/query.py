@@ -7,8 +7,9 @@ from asyncwikidata.chunkify import create_chunks
 class Query(object):
     """Class for a representation of SPARQL query along with parameters
     """
-    def __init__(self, query_string: str, **call_params) -> None:
+    def __init__(self, query_string: str, name: Optional[str]=None, **call_params) -> None:
         self.query_string_raw = query_string
+        self.name = name if name else str(f'{self.__class__.__name__} {id(self)}')
         self.call_params = call_params
         self.query_string = self.query_string_raw.format(**self.call_params)
 
