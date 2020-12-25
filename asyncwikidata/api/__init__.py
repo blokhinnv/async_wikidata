@@ -1,0 +1,1 @@
+from asyncwikidata.api.async_api_wrapper import AsyncAPIWrapper
