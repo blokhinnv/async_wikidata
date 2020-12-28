@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Awaitable
+from typing import Awaitable, Optional
 import sys
 
 import aiohttp
@@ -11,6 +11,7 @@ from loguru import logger
 
 from asyncwikidata.api.entity import Entity
 from asyncwikidata.chunkify import create_chunks
+from asyncwikidata import run_async
 
 logger.remove()
 logger.add(sys.stdout, level="INFO")
@@ -92,11 +93,16 @@ class AsyncAPIWrapper(object):
         if format != 'json':
             raise ValueError(f'Unsupported format {format}')
 
+        if isinstance(ids, str):
+            ids = [ids]
+
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        responses = asyncio.run(self.gather_tasks(action='wbgetentities',
-                                                  ids=ids,
-                                                  format=format,
-                                                  **kwargs))
+        responses = run_async(self.gather_tasks, action='wbgetentities', ids=ids, format=format, **kwargs)
+        if 'languages' in kwargs:
+            repr_lang = kwargs['languages'][0]
+        else:
+            repr_lang = None
+
         objs = []
         for response_bytes in responses:
             response = json.loads(response_bytes.decode("utf-8"))
@@ -105,7 +111,7 @@ class AsyncAPIWrapper(object):
 
             for obj_id, obj in response['entities'].items():
                 if self.entity_id_pattern.match(obj_id):
-                    objs.append(Entity(obj))
+                    objs.append(Entity(obj, repr_lang=repr_lang))
                 else:
                     raise ValueError(f'Unrecognized obj {obj_id} type')
         return objs

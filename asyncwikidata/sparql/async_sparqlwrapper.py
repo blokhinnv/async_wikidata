@@ -15,6 +15,7 @@ from SPARQLWrapper.Wrapper import QueryResult
 from asyncwikidata.sparql.query import Query
 from asyncwikidata.sparql.async_query_result import AsyncQueryResult
 from asyncwikidata.sparql.result_simplifiers import Simplifier
+from asyncwikidata import run_async
 
 logger.remove()
 logger.add(sys.stdout, level="INFO")
@@ -149,7 +150,9 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             self.use_sync_wrapper = True
         elif isinstance(query, list) and all(isinstance(q, Query) for q in query):
             logger.debug('[setQuery] setting list of Query objects...')
-            if len(query) == 1:
+            if not query:
+                raise ValueError('Cannot set empty query list.')
+            elif len(query) == 1:
                 super().setQuery(query[0].query_string)
                 self.use_sync_wrapper = True
             else:
@@ -201,7 +204,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         else:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             logger.debug('Asynchronous SPARQL Wrapper is used')
-            query_result = AsyncQueryResult(responses=asyncio.run(self.gather_tasks()),
+            query_result = AsyncQueryResult(responses=run_async(self.gather_tasks),
                                             format=self.returnFormat,
                                             merge_results=self.merge_results)
 

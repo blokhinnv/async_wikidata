@@ -32,9 +32,15 @@ class Entity(object):
         self.sitelinks = {site: SiteLink(**sl_dict) for site, sl_dict in entity_dict['sitelinks'].items()
                            if site.endswith('wiki')}
 
+    def get_repr_lang_or_first(self, dictionary: dict) -> Monolingual:
+        if self.repr_lang and self.repr_lang in dictionary:
+            return dictionary[self.repr_lang]
+        else:
+            return list(dictionary.values())[0]
+
     def __repr__(self) -> str:
         return '{}(id={}, label={}, description={}, aliases={})'.format(self.__class__.__name__,
                                                                         self.id,
-                                                                        self.labels.get(self.repr_lang, None),
-                                                                        self.descriptions.get(self.repr_lang, None),
-                                                                        self.aliases.get(self.repr_lang, None))
+                                                                        self.get_repr_lang_or_first(self.labels),
+                                                                        self.get_repr_lang_or_first(self.descriptions),
+                                                                        self.get_repr_lang_or_first(self.aliases))

@@ -18,11 +18,15 @@ class WikidataJSONResultSimplifier(Simplifier):
     def __init__(self, query_result: Union[QueryResult, AsyncQueryResult]) -> None:
         self.query_result = query_result
 
+    @staticmethod
+    def remove_prefix(s: str) -> str:
+        return s.split('/')[-1]
+
     def simplifier_operator(self, results):
         if 'results' in results:
             # results are at the first level
             results = results['results']['bindings']
-            return [{k: v['value'] for k, v in answer.items()} for answer in results]
+            return [{k: self.remove_prefix(v['value']) for k, v in answer.items()} for answer in results]
         else:
             # key are query names and values are to be simplified
             return {key: self.simplifier_operator(value) for key, value in results.items()}
