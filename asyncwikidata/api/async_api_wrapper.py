@@ -15,25 +15,36 @@ from asyncwikidata.chunkify import create_chunks
 from asyncwikidata import run_async
 
 logger.remove()
-logger.add(sys.stdout, level="INFO")
+logger.add(sys.stdout, level="DEBUG")
 
 class AsyncAPIWrapper(object):
-    def __init__(self, base_url: str, agent: Optional[str] = None, sep: str = '|') -> None:
+    def __init__(self, base_url: str, agent: Optional[str] = None, sep: str = '|', sema_value: int = 10) -> None:
         """
         Args:
             base_url (str): url of API endpoint
             agent (str): used agent
             sep (str): a symbol to separate values in the parameter
+            sema_value (int, optional): initial value of asyncio.BoundedSemaphore to limit concurrency. Defaults to 10.
         """
         self.base_url = base_url
         self.agent = agent if agent else UserAgent().random
         self.history = []  # list of urls which get requests were send to
         self.sep = sep
+        self.sema_value = sema_value
 
-    async def get(self, session, **kwargs) -> Awaitable:
+    async def get(self, session: aiohttp.ClientSession, sema: asyncio.BoundedSemaphore, **kwargs) -> Awaitable:
+        """Executes get request.
+
+        Args:
+            session (aiohttp.ClientSession): aiohttp session for the request
+            sema (asyncio.BoundedSemaphore): semaphore to limit concurrency
+
+        Returns:
+            Awaitable: resulting bytes of the request
+        """
         headers = {}
         headers["User-Agent"] = self.agent
-        async with session.get(self.base_url, params=kwargs, headers=headers) as response:
+        async with sema, session.get(self.base_url, params=kwargs, headers=headers) as response:
             self.history.append(response.url)
             assert response.status == 200
             return await response.read()
@@ -69,12 +80,13 @@ class AsyncAPIWrapper(object):
         split_param = kwargs.pop(split_by)
 
         async with aiohttp.ClientSession() as session:
+            sema = asyncio.BoundedSemaphore(self.sema_value)
             tasks = []
             for split_param_chunk in create_chunks(split_param, chunk_size):
                 kwargs_chunk = kwargs.copy()
                 kwargs_chunk[split_by] = split_param_chunk
                 get_params = self._create_request_params(**kwargs_chunk)
-                task = asyncio.create_task(self.get(session, **get_params))
+                task = asyncio.create_task(self.get(session, sema, **get_params))
                 tasks.append(task)
             return await asyncio.gather(*tasks)
 
@@ -90,7 +102,6 @@ class AsyncAPIWrapper(object):
         get_params = self._create_request_params(**kwargs)
         with requests.Session() as session:
             return session.get(self.base_url, params=get_params, headers=headers)
-
 
     def get_entities(self, ids: list[str], format: str, chunk_size: int = 50, **kwargs) -> list[Entity]:
         """The wbgetentities call

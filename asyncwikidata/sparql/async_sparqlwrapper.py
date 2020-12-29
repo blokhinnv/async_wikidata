@@ -1,12 +1,12 @@
 from __future__ import annotations
-import base64
-from typing import Union, Optional, Awaitable
 import asyncio
-from loguru import logger
+import base64
 import sys
+from typing import Union, Optional, Awaitable
 
 import aiohttp
 from aiohttp import web
+from loguru import logger
 from SPARQLWrapper import SPARQLWrapper
 from SPARQLWrapper.SPARQLExceptions import QueryBadFormed, EndPointNotFound, EndPointInternalError, Unauthorized, URITooLong
 from SPARQLWrapper.Wrapper import POST, POSTDIRECTLY, BASIC, DIGEST, _allowedAuth, GET, JSON
@@ -23,11 +23,21 @@ logger.add(sys.stdout, level="INFO")
 
 class AsyncSPARQLWrapper(SPARQLWrapper):
     """The class to parallelize queries """
-    def __init__(self, endpoint, merge_results: bool, simplifier_cls: Optional[Simplifier] = None, **kwargs) -> None:
+    def __init__(self, endpoint: str, merge_results: bool,
+                 simplifier_cls: Optional[Simplifier] = None,
+                 sema_value: int = 10, **kwargs) -> None:
+        """
+        Args:
+            endpoint (str): url to SPARQL endpoint
+            merge_results (bool): if True, merges results obtained concurrently into one collection
+            simplifier_cls (Optional[Simplifier], optional): object to simplify obtained results. Defaults to None.
+            sema_value (int, optional): initial value of asyncio.BoundedSemaphore to limit concurrency. Defaults to 10.
+        """
         super().__init__(endpoint, **kwargs)
         self.merge_results = merge_results
         self.simplifier_cls = simplifier_cls
         self.use_sync_wrapper = True
+        self.sema_value = sema_value
 
 
     def _create_request_params(self, qstr: str) -> tuple[str, bytes, dict]:
@@ -82,12 +92,13 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
 
         return uri, data, headers
 
-    async def _async_request(self, query: Query, session: aiohttp.ClientSession) -> Awaitable[tuple[str, bytes]]:
+    async def _async_request(self, query: Query, session: aiohttp.ClientSession, sema: asyncio.BoundedSemaphore) -> Awaitable[tuple[str, bytes]]:
         """Execute the request asynchronously
 
         Args:
             qstr (str): string containing valid SPARQL query
             session (aiohttp.ClientSession): aiohttp session for the request
+            sema (asyncio.BoundedSemaphore): semaphore to limit concurrency
 
         Raises:
             NotImplementedError: if returnFormat is not JSON
@@ -109,8 +120,8 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         uri, data, headers = self._create_request_params(query.query_string)
         try:
             if self.method in [GET, POST]:
-                async with session.request(method=self.method, url=uri,
-                                           data=data, headers=headers) as resp:
+                async with sema, session.request(method=self.method, url=uri,
+                                                 data=data, headers=headers) as resp:
                     return (query.name, await resp.read())
             else:
                 raise NotImplementedError(f'method = {self.method} is not implemented; use SPARQLWrapper instead')
@@ -184,8 +195,9 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         """
         tasks = []
         async with aiohttp.ClientSession() as session:
+            sema = asyncio.BoundedSemaphore(self.sema_value)
             for query in self.queries:
-                tasks.append(asyncio.create_task(self._async_request(query, session)))
+                tasks.append(asyncio.create_task(self._async_request(query, session, sema)))
             return await asyncio.gather(*tasks)
 
     def query(self) -> Union[Simplifier, AsyncQueryResult, QueryResult]:
