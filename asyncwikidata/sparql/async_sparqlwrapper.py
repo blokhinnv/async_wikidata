@@ -15,6 +15,7 @@ from SPARQLWrapper.Wrapper import QueryResult
 from asyncwikidata.sparql.query import Query
 from asyncwikidata.sparql.async_query_result import AsyncQueryResult
 from asyncwikidata.sparql.result_simplifiers import Simplifier
+from asyncwikidata.sparql.http_response_wrapper import HTTPResponseWrapper
 from asyncwikidata import run_async
 
 logger.remove()
@@ -25,19 +26,23 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
     """The class to parallelize queries """
     def __init__(self, endpoint: str, merge_results: bool,
                  simplifier_cls: Optional[Simplifier] = None,
-                 sema_value: int = 10, **kwargs) -> None:
+                 sema_value: int = 10, cache_results: bool = True, **kwargs) -> None:
         """
         Args:
             endpoint (str): url to SPARQL endpoint
             merge_results (bool): if True, merges results obtained concurrently into one collection
             simplifier_cls (Optional[Simplifier], optional): object to simplify obtained results. Defaults to None.
             sema_value (int, optional): initial value of asyncio.BoundedSemaphore to limit concurrency. Defaults to 10.
+            cache_results (bool, optional): if True then query results will be cached . Defaults to True.
+
         """
         super().__init__(endpoint, **kwargs)
         self.merge_results = merge_results
         self.simplifier_cls = simplifier_cls
         self.use_sync_wrapper = True
         self.sema_value = sema_value
+        self.cache_results = cache_results
+        self.__cache = {}
 
 
     def _create_request_params(self, qstr: str) -> tuple[str, bytes, dict]:
@@ -92,7 +97,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
 
         return uri, data, headers
 
-    async def _async_request(self, query: Query, session: aiohttp.ClientSession, sema: asyncio.BoundedSemaphore) -> Awaitable[tuple[str, bytes]]:
+    async def _async_request(self, query: Query, session: aiohttp.ClientSession, sema: asyncio.BoundedSemaphore) -> Awaitable[tuple[Query, bytes]]:
         """Execute the request asynchronously
 
         Args:
@@ -111,7 +116,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             web.HTTPError: if the requests some other code
 
         Returns:
-            Awaitable[tuple[str, bytes]]: query name and resulting bytes of the request
+            Awaitable[tuple[str, bytes]]: query object and resulting bytes of the request
         """
         if self.returnFormat != JSON:
             raise NotImplementedError(f'returnFormat = {self.returnFormat} is not implemented; use SPARQLWrapper instead')
@@ -122,7 +127,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             if self.method in [GET, POST]:
                 async with sema, session.request(method=self.method, url=uri,
                                                  data=data, headers=headers) as resp:
-                    return (query.name, await resp.read())
+                    return (query, await resp.read())
             else:
                 raise NotImplementedError(f'method = {self.method} is not implemented; use SPARQLWrapper instead')
 
@@ -141,8 +146,7 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
                 raise e
 
     def setQuery(self, query: Union[str, Query, list[Query]]) -> None:
-        """Set the query. If it is a string, use it how it is. If it is the `Query` object
-        calls it _prepare_query method to get a collection of string queries.
+        """Set the query.
 
         Args:
             query (Union[str, Query]): query (queries) to execute
@@ -197,7 +201,10 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         async with aiohttp.ClientSession() as session:
             sema = asyncio.BoundedSemaphore(self.sema_value)
             for query in self.queries:
-                tasks.append(asyncio.create_task(self._async_request(query, session, sema)))
+                if self.cache_results and query in self.__cache:
+                    tasks.append(asyncio.create_task(self._get_from_cache(query)))
+                else:
+                    tasks.append(asyncio.create_task(self._async_request(query, session, sema)))
             return await asyncio.gather(*tasks)
 
     def query(self) -> Union[Simplifier, AsyncQueryResult, QueryResult]:
@@ -212,12 +219,27 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
         """
         if self.use_sync_wrapper:
             logger.debug('Vanilla SPARQL Wrapper is used')
-            query_result = super().query()
+            if self.cache_results and self.queryString in self.__cache:
+                query_result = self.__cache[self.queryString]
+            else:
+                query_result = super().query()
+                if self.cache_results:
+                    query_result.response = HTTPResponseWrapper(query_result.response)
+                    self.__cache[self.queryString] = query_result
         else:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             logger.debug('Asynchronous SPARQL Wrapper is used')
-            query_result = AsyncQueryResult(responses=run_async(self.gather_tasks),
+            responses = run_async(self.gather_tasks)
+            if self.cache_results:
+                for query, query_result in responses:
+                    self.__cache[query] = query_result
+
+            query_result = AsyncQueryResult(responses=responses,
                                             format=self.returnFormat,
                                             merge_results=self.merge_results)
 
         return self.simplifier_cls(query_result) if self.simplifier_cls else query_result
+
+    async def _get_from_cache(self, query) -> Awaitable[tuple]:
+        '''Coroutine to get query and query result from the cache'''
+        return (query, self.__cache[query])

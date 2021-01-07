@@ -8,10 +8,10 @@ class Query(object):
     """Class for a representation of SPARQL query along with parameters
     """
     def __init__(self, query_string: str, name: Optional[str]=None, **call_params) -> None:
-        self.query_string_raw = query_string
-        self.name = name if name else str(f'{self.__class__.__name__} {id(self)}')
-        self.call_params = call_params
-        self.query_string = self.query_string_raw.format(**self.call_params)
+        self.__query_string_raw = query_string
+        self.__name = name if name else str(f'{self.__class__.__name__} {id(self)}')
+        self.__call_params = call_params
+        self.__query_string = self.query_string_raw.format(**self.__call_params)
 
     @classmethod
     def split_by_values_clause(cls, query_string: str, chunkify_by: Optional[str] = None,
@@ -45,3 +45,23 @@ class Query(object):
 
     def __str__(self) -> str:
         return f'{self.__class__.__name__}({self.query_string})'
+
+    @property
+    def query_string_raw(self):
+        return self.__query_string_raw
+
+    @property
+    def name(self):
+        return self.__name
+
+    @property
+    def query_string(self):
+        return self.__query_string
+
+    def __hash__(self):
+        return hash(self.__query_string)
+
+    def __eq__(self, o: object) -> bool:
+        if not isinstance(o, Query):
+            return False
+        return self.__query_string == o.__query_string

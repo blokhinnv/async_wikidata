@@ -21,7 +21,7 @@ class AsyncQueryResult:
 
     def convert_json(self) -> dict:
         '''Decodes JSONs and merges (if necessary) them into one dictionary preserving the structure.'''
-        results = {qname: json.loads(response_bytes.decode("utf-8")) for qname, response_bytes in self.responses}
+        results = {query.name: json.loads(response_bytes.decode("utf-8")) for query, response_bytes in self.responses}
 
         if self.merge_results:
             joined_result = {}
