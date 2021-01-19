@@ -26,7 +26,8 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
     """The class to parallelize queries """
     def __init__(self, endpoint: str, merge_results: bool,
                  simplifier_cls: Optional[Simplifier] = None,
-                 sema_value: int = 10, cache_results: bool = True, **kwargs) -> None:
+                 sema_value: int = 10, cache_results: bool = True,
+                 delay_after_request: int = 0, **kwargs) -> None:
         """
         Args:
             endpoint (str): url to SPARQL endpoint
@@ -34,14 +35,16 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             simplifier_cls (Optional[Simplifier], optional): object to simplify obtained results. Defaults to None.
             sema_value (int, optional): initial value of asyncio.BoundedSemaphore to limit concurrency. Defaults to 10.
             cache_results (bool, optional): if True then query results will be cached . Defaults to True.
+            delay_after_request (int, optional): seconds to sleep after each request . Defaults to 0.
 
         """
         super().__init__(endpoint, **kwargs)
         self.merge_results = merge_results
         self.simplifier_cls = simplifier_cls
-        self.use_sync_wrapper = True
         self.sema_value = sema_value
         self.cache_results = cache_results
+        self.delay_after_request = delay_after_request
+        self.use_sync_wrapper = True
         self.__cache = {}
 
 
@@ -127,6 +130,8 @@ class AsyncSPARQLWrapper(SPARQLWrapper):
             if self.method in [GET, POST]:
                 async with sema, session.request(method=self.method, url=uri,
                                                  data=data, headers=headers) as resp:
+                    if self.delay_after_request:
+                        await asyncio.sleep(self.delay_after_request)
                     return (query, await resp.read())
             else:
                 raise NotImplementedError(f'method = {self.method} is not implemented; use SPARQLWrapper instead')
