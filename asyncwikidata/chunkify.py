@@ -12,6 +12,9 @@ def create_chunks(data: list, n: Optional[int]=None):
     Yields:
         a piece of data with size n from the list data
     """
+    if not isinstance(data, list):
+        data = list(data)
+
     if not n:
         yield data
     else:
