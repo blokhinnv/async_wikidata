@@ -127,9 +127,10 @@ class AsyncAPIWrapper(object):
         if isinstance(ids, str):
             ids = [ids]
 
-
+        props = 'info|sitelinks/urls|aliases|labels|descriptions|claims|datatype'
         responses = self.execute_many(split_by='ids', chunk_size=chunk_size,
-                                      action='wbgetentities', ids=ids, format=format, **kwargs)
+                                      action='wbgetentities', ids=ids,
+                                      format=format, props=props, **kwargs)
         if 'languages' in kwargs:
             repr_lang = kwargs['languages'][0]
         else:
